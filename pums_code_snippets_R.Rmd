@@ -1,0 +1,115 @@
+---
+title: "Untitled"
+author: "Levana Zhang"
+date: "April 22, 2020"
+output: html_document
+---
+
+```{r}
+library(dplyr)
+library(readr)
+
+## working directory is in same folder as psam_06.csv, the data set in question
+pcs_data <- read_csv("psam_p06.csv") # takes 172 sec (~3 min to run)
+hcs_data <- read_csv("psam_h06.csv")
+
+######## Q1 ########
+## Filtering columns relevant to question (PUMA, NAICSP, and Place of Work PUMA)
+pcs_data_q1 <- tibble(
+  "PUMA" = pcs_data$PUMA,
+  "NAICSP" = pcs_data$NAICSP,
+  "POWPUMA" = pcs_data$POWPUMA
+)
+## Filtering by specific NAICSP and POWPUMA values
+pcs_data_q1 <- pcs_data_q1 %>% filter(NAICSP == "32411", POWPUMA == "01300")
+## Extract PUMA column to a variable
+answQ1 <- pcs_data_q1$PUMA
+## NEED TO FIGURE OUT CHLOROPLETH
+
+######## Q2 ########
+## Filtering columns relevant to question
+q2_age_sex_race <- tibble(
+  "AGEP" = pcs_data$AGEP, #Age
+  "SEX" = pcs_data$SEX, #Gender
+  "RAC1P" = pcs_data$RAC1P, #Race (most general)
+  "NAICSP" = pcs_data$NAICSP,
+  "SERIALNO" = pcs_data$SERIALNO #Serial Number of person's household (important for joining household and personal data)
+)
+## Filter NA entries in SERIALNO
+q2_age_sex_race <- q2_age_sex_race %>% filter(!is.na(SERIALNO))
+## FIltering by specific NAICSP value
+q2_age_sex_race <- q2_age_sex_race %>% filter(NAICSP == "32411")
+## Return 1-column tibble of unique serial numbers among data we have filtered (in q2_age_sex_race)
+q2_serialno <- distinct(tibble("SERIALNO" = q2_age_sex_race$SERIALNO))
+serialno32411 <- q2_serialno$SERIALNO
+## Return 1-column tibble of serial numbers in general person-level dataset
+all_serialno <- tibble("SERIALNO" = pcs_data$SERIALNO)
+## find all serial numbers (repeats count) among serial numbers from general person-level dataset that are also present in the set of serial numbers we have extracted from our specific dataset (q2_age_sex_race)
+serialno <- filter(all_serialno, SERIALNO %in% serialno32411)
+## Make 2-column tibble in which one column is vector of (unique) serial numbers, and other column is corresponding counts of serial numbers in q2_age_sex_rac in all_serial_no
+## We will use the count (denoted "SIZE") column as our household size (corresponding to household serial no)
+household_size <- table(serialno$SERIALNO)
+q2_size <- as.data.frame(household_size)
+colnames(q2_size) <- c("SERIALNO", "SIZE")
+q2_size <- tibble("SERIALNO" = q2_size$SERIALNO, "SIZE" = q2_size$SIZE)
+## table() by default returns factor values for counts, so need to turn counts into numeric values for join function to work
+q2_size$SERIALNO <- as.numeric(as.character(q2_size$SERIALNO))
+## join household size to age, gender, race data, using SERIALNO as joining variable
+q2_age_sex_race_size <- inner_join(q2_age_sex_race, q2_size)
+
+## create tibble consisting of household income and household serial number from household data
+q2_income <- tibble(
+  "HINCP" = hcs_data$HINCP,
+  "SERIALNO" = hcs_data$SERIALNO
+)
+## filter NA values
+q2_income <- q2_income %>% filter(!is.na(SERIALNO))
+
+## join age, sex, race, household size data with household income, using SERIALNO as joining variable
+q2_final <- inner_join(q2_age_sex_race_size, q2_income)
+
+######## Q3 ########
+## Filtering columns relevant to question (PUMA and Non-English Language)
+pcs_data_q3 <- tibble(
+  "PUMA" = pcs_data$PUMA,
+  "LANP" = pcs_data$LANP
+)
+## Count frequencies of each language code in pcs_data_q3 and order language & frequencies from most frequent to least frequent. Also filtered out NA values
+language_freq = filter(arrange(count(pcs_data_q3, LANP), desc(n)), is.na(LANP) != TRUE)
+## Extracted top 5 non-English languages by frequency (& ensured language codes are strings)
+# TOP 5 LANGUAGES (by LANP): 1200 = Spanish, 1970 = Chinese, 2920 = Tagalog, 1960 = Vietnamese, 2575 = Korean
+top_five <- as.character(head(language_freq$LANP, n = 5L))
+## Create vector of unique PUMAS in California
+puma <- distinct(pcs_data, PUMA)
+## Counted number of unique PUMAS in California (for a for loop we'll run later)
+num_puma <- nrow(distinct(pcs_data, PUMA)[,1])
+# we're creating a function that extracts the top 5 most frequent language variables (that is NOT among the top 5 language variables in California, as we computed earleir) from a particular puma in a dataset
+# For this exercise,
+# data = pcs_data_q3, puma = any from puma tibble (indexes contained in num_puma)
+# puma MUST be a string!
+count_language <- function(data, puma, top_5){
+  ## filter data by specific PUMA
+  puma_area <- filter(data, PUMA == puma)
+  ## Count frequencies of each language code in puma_area and order language & frequencies from most frequent to least frequent. Also filtered out NA values
+  language_freq <- filter(arrange(count(puma_area, LANP), desc(n)), is.na(LANP) != TRUE)
+  ## Filter out language codes that are among top 5 in California
+  non_top_5_freq <- filter(language_freq, !LANP %in% top_5)
+  ## Extract top 5 language codes in PUMA (after filtering out top 5 languages in California)
+  top_five <- head(non_top_5_freq$LANP, n = 5L)
+  top_five
+}
+## create a dummy data frame
+non_top_five_lanp = tibble(
+  "PUMA" = 0,
+  "first" = 0,
+  "second" = 0,
+  "third" = 0,
+  "fourth" = 0,
+  "fifth" = 0
+)
+## For each PUMA, run count_language() to extract top 5 languages in each PUMA that is not in top 5 languages in California
+for (i in 1:num_puma){
+  non_top_five_lanp[i,] = c(puma$PUMA[i], count_language(pcs_data_q3, puma$PUMA[i], top_five))
+}
+non_top_five_lanp
+```
